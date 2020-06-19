@@ -1,0 +1,65 @@
+---
+# This playbook deploys the Ansible Tower application (database, web and
+# worker daemons) to a single server.
+
+
+- name: "Group nodes by OS distribution"
+  hosts: all
+  gather_facts: true
+  tasks:
+
+- name: "Define role discovered variables, usable throughout the playbook"
+  hosts: tower:database:instance_group_*
+  gather_facts: false
+  roles:
+    - role: postgres
+      postgres_exec_vars_only: true
+    - role: nginx
+      nginx_exec_vars_only: true
+    - role: supervisor
+      supervisor_exec_vars_only: true
+    - role: awx_install
+      awx_install_exec_vars_only: true
+
+
+- name: "Install postgres database node"
+  hosts: database
+  gather_facts: false
+  roles:
+    - role: postgres
+      tags: postgresql_database
+      postgres_allowed_ipv4: "0.0.0.0/0"
+      postgres_allowed_ipv6: "::/0"
+      postgres_username: "{{ pg_username }}"
+      postgres_password: "{{ pg_hashed_password | default(pg_password) }}"
+      postgres_database: "{{ pg_database }}"
+      max_postgres_connections: 1024
+      postgres_shared_memory_size: "{{ (ansible_memtotal_mb*0.3)|int }}"
+      postgres_work_mem: "{{ (ansible_memtotal_mb*0.03)|int }}"
+      postgres_maintenance_work_mem: "{{ (ansible_memtotal_mb*0.04)|int }}"
+
+    - role: firewall
+      tags: firewall
+      firewalld_http_port: "{{ nginx_http_port }}"
+      firewalld_https_port: "{{ nginx_https_port }}"
+      when: ansible_os_family == 'RedHat'
+
+- name: "Install Tower node(s)"
+  hosts: tower:instance_group_*
+  gather_facts: false
+  vars:
+    awx_install_home: /var/lib/awx
+    aw_user: awx
+  pre_tasks:
+    - set_fact: cluster_host="{{ rabbitmq_host|default(ansible_host) }}"
+  roles:
+
+
+    - role: supervisor
+      tags: supervisor
+      local_queue: "{{ cluster_host }}"
+
+    - role: nginx
+      tags: nginx
+
+
